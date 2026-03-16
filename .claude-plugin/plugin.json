@@ -6,7 +6,7 @@
     "name": "tjcjc"
   },
   "repository": "https://github.com/tjcjc/share-session",
-  "commands": ["./plugin/commands"],
-  "hooks": "./plugin/hooks/hooks.json",
+  "commands": ["./commands"],
+  "hooks": "./hooks/hooks.json",
   "install": "./scripts/install-binary.sh"
 }
