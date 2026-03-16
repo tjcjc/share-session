@@ -231,6 +231,16 @@ tmux kill-session -t "$SERVER_SESSION" >/dev/null 2>&1 || true
 tmux kill-session -t "$TUNNEL_SESSION" >/dev/null 2>&1 || true
 rm -f "$SERVER_LOG" "$TUNNEL_LOG" "$PUBLIC_URL_FILE" "$LOCAL_URL_FILE"
 
+# Wait for port to be released (up to 3 seconds)
+for _ in $(seq 1 12); do
+  if ! lsof -iTCP:"$PORT" -sTCP:LISTEN -t >/dev/null 2>&1; then
+    break
+  fi
+  sleep 0.25
+done
+# Force kill anything still holding the port
+lsof -iTCP:"$PORT" -sTCP:LISTEN -t 2>/dev/null | xargs -r kill -9 2>/dev/null || true
+
 CMD="exec $(quote "$BIN_PATH") serve --session $(quote "$SESSION_ID") --claude-root $(quote "$CLAUDE_ROOT") --claude-bin $(quote "$CLAUDE_BIN") --host $(quote "$HOST") --port $(quote "$PORT")"
 
 if [[ "$ALLOW_INPUT" -eq 0 ]]; then
