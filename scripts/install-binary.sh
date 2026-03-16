@@ -38,7 +38,7 @@ fi
 
 mkdir -p "$BIN_DIR"
 
-VERSION="0.1.0"
+VERSION="0.2.0"
 BASE_URL="https://github.com/tjcjc/share-session/releases/download/v${VERSION}"
 URL="${BASE_URL}/claude-session-share-${PLATFORM}"
 

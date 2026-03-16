@@ -14,7 +14,7 @@
         "url": "https://github.com/tjcjc/share-session.git"
       },
       "description": "Generate a local network share link for the current Claude Code session",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "strict": true
     }
   ]
