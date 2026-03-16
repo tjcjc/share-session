@@ -1,0 +1,21 @@
+{
+  "name": "share-session",
+  "owner": {
+    "name": "tjcjc"
+  },
+  "metadata": {
+    "description": "Share Claude Code sessions over local network"
+  },
+  "plugins": [
+    {
+      "name": "session-share",
+      "source": {
+        "source": "url",
+        "url": "https://github.com/tjcjc/share-session.git"
+      },
+      "description": "Generate a local network share link for the current Claude Code session",
+      "version": "0.1.0",
+      "strict": true
+    }
+  ]
+}
