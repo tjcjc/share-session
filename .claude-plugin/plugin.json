@@ -1,6 +1,6 @@
 {
   "name": "session-share",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Generate a local network share link for the current Claude Code session",
   "author": {
     "name": "tjcjc"

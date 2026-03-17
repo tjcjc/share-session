@@ -133,12 +133,14 @@ while [[ $# -gt 0 ]]; do
 done
 
 SESSION_ID="${CLAUDE_SESSION_SHARE_SESSION_ID:-${CLAUDE_CODE_SESSION_ID:-}}"
+SESSION_CWD=""
 if [[ -z "$SESSION_ID" ]]; then
   SESSIONS_DIR="${CLAUDE_ROOT}/sessions"
   if [[ -d "$SESSIONS_DIR" ]]; then
     PPID_FILE="${SESSIONS_DIR}/${PPID}.json"
     if [[ -f "$PPID_FILE" ]]; then
       SESSION_ID="$(python3 -c "import json,sys; d=json.load(open('$PPID_FILE')); print(d.get('sessionId',''))" 2>/dev/null || true)"
+      SESSION_CWD="$(python3 -c "import json,sys; d=json.load(open('$PPID_FILE')); print(d.get('cwd',''))" 2>/dev/null || true)"
     fi
     if [[ -z "$SESSION_ID" ]]; then
       CURRENT_CWD="$(pwd)"
@@ -236,6 +238,10 @@ done
 lsof -iTCP:"$PORT" -sTCP:LISTEN -t 2>/dev/null | xargs -r kill -9 2>/dev/null || true
 
 CMD="$(quote "$BIN_PATH") serve --session $(quote "$SESSION_ID") --claude-root $(quote "$CLAUDE_ROOT") --claude-bin $(quote "$CLAUDE_BIN") --host $(quote "$HOST") --port $(quote "$PORT")"
+
+if [[ -n "$SESSION_CWD" ]]; then
+  CMD+=" --session-cwd $(quote "$SESSION_CWD")"
+fi
 
 if [[ "$ALLOW_INPUT" -eq 0 ]]; then
   CMD+=" --read-only"

@@ -391,7 +391,7 @@ func extractListMeta(projectID, sessionID, filePath string) SessionListItem {
 	}
 }
 
-func resolveSessionFile(claudeRoot string, sessionID, projectID, filePath string) (pID, sID, fPath string, err error) {
+func resolveSessionFile(claudeRoot string, sessionID, projectID, filePath, sessionCWD string) (pID, sID, fPath string, err error) {
 	if filePath != "" {
 		abs, _ := filepath.Abs(filePath)
 		sID = strings.TrimSuffix(filepath.Base(abs), ".jsonl")
@@ -412,6 +412,29 @@ func resolveSessionFile(claudeRoot string, sessionID, projectID, filePath string
 	for _, s := range sessions {
 		if s.SessionID == sessionID {
 			return s.ProjectID, s.SessionID, s.FilePath, nil
+		}
+	}
+	// Fallback: construct path from CWD (session file may not exist yet)
+	if sessionCWD != "" {
+		encodedCWD := strings.ReplaceAll(sessionCWD, "/", "-")
+		if strings.HasPrefix(encodedCWD, "-") {
+			encodedCWD = encodedCWD[1:]
+		}
+		inferredProjectID := "-" + strings.ReplaceAll(sessionCWD[1:], "/", "-")
+		fPath = filepath.Join(getProjectsDir(claudeRoot), inferredProjectID, sessionID+".jsonl")
+		if _, statErr := os.Stat(fPath); statErr == nil {
+			return inferredProjectID, sessionID, fPath, nil
+		}
+		// Try all project dirs for a matching session file
+		projectEntries, _ := os.ReadDir(getProjectsDir(claudeRoot))
+		for _, pe := range projectEntries {
+			if !pe.IsDir() {
+				continue
+			}
+			candidate := filepath.Join(getProjectsDir(claudeRoot), pe.Name(), sessionID+".jsonl")
+			if _, statErr := os.Stat(candidate); statErr == nil {
+				return pe.Name(), sessionID, candidate, nil
+			}
 		}
 	}
 	return "", "", "", fmt.Errorf("session %s not found", sessionID)
@@ -815,7 +838,7 @@ func main() {
 		}
 
 	case "serve":
-		projectID, sessionID, filePath, err := resolveSessionFile(claudeRoot, flags["session"], flags["project"], flags["session-file"])
+		projectID, sessionID, filePath, err := resolveSessionFile(claudeRoot, flags["session"], flags["project"], flags["session-file"], flags["session-cwd"])
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
