@@ -469,6 +469,24 @@ func (s *Server) shareURL() string {
 	}
 	host := s.host
 	if host == "0.0.0.0" || host == "::" {
+		// Use first non-loopback IP for LAN access
+		ifaces, _ := net.Interfaces()
+		for _, iface := range ifaces {
+			addrs, _ := iface.Addrs()
+			for _, addr := range addrs {
+				var ip net.IP
+				switch v := addr.(type) {
+				case *net.IPNet:
+					ip = v.IP
+				case *net.IPAddr:
+					ip = v.IP
+				}
+				if ip == nil || ip.IsLoopback() || ip.To4() == nil {
+					continue
+				}
+				return fmt.Sprintf("http://%s:%d/s/%s", ip.String(), s.port, s.token)
+			}
+		}
 		host = "127.0.0.1"
 	}
 	return fmt.Sprintf("http://%s:%d/s/%s", host, s.port, s.token)
