@@ -29,13 +29,19 @@ quote() {
   printf '%q' "$1"
 }
 
-append_arg() {
-  local value="$1"
-  CMD+=" $(quote "$value")"
+is_running() {
+  local pid_file="$1"
+  [[ -f "$pid_file" ]] && kill -0 "$(cat "$pid_file")" 2>/dev/null
 }
 
-tmux_has_session() {
-  tmux has-session -t "$1" >/dev/null 2>&1
+stop_process() {
+  local pid_file="$1"
+  if [[ -f "$pid_file" ]]; then
+    local pid
+    pid="$(cat "$pid_file")"
+    kill "$pid" 2>/dev/null || true
+    rm -f "$pid_file"
+  fi
 }
 
 read_existing_local_url() {
@@ -48,12 +54,7 @@ read_existing_local_url() {
 pick_port() {
   local candidate
   for candidate in $(seq 3939 3999); do
-    if command -v ss >/dev/null 2>&1; then
-      if ! ss -ltn | awk '{print $4}' | grep -Eq "[:.]${candidate}\$"; then
-        printf '%s\n' "$candidate"
-        return 0
-      fi
-    else
+    if ! lsof -iTCP:"$candidate" -sTCP:LISTEN -t >/dev/null 2>&1; then
       printf '%s\n' "$candidate"
       return 0
     fi
@@ -133,15 +134,12 @@ done
 
 SESSION_ID="${CLAUDE_SESSION_SHARE_SESSION_ID:-${CLAUDE_CODE_SESSION_ID:-}}"
 if [[ -z "$SESSION_ID" ]]; then
-  # Fallback: scan ~/.claude/sessions/ for a session matching current PPID or CWD
   SESSIONS_DIR="${CLAUDE_ROOT}/sessions"
   if [[ -d "$SESSIONS_DIR" ]]; then
-    # Try to match by PPID first (most reliable)
     PPID_FILE="${SESSIONS_DIR}/${PPID}.json"
     if [[ -f "$PPID_FILE" ]]; then
       SESSION_ID="$(python3 -c "import json,sys; d=json.load(open('$PPID_FILE')); print(d.get('sessionId',''))" 2>/dev/null || true)"
     fi
-    # Fallback: match by CWD
     if [[ -z "$SESSION_ID" ]]; then
       CURRENT_CWD="$(pwd)"
       for f in "$SESSIONS_DIR"/*.json; do
@@ -162,7 +160,7 @@ fi
 
 if [[ ! -x "$BIN_PATH" ]]; then
   echo "claude-session-share binary not found, downloading..." >&2
-  bash "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/install-binary.sh"
+  bash "$SCRIPT_DIR/install-binary.sh"
 fi
 
 if [[ ! -x "$BIN_PATH" ]]; then
@@ -172,11 +170,6 @@ fi
 
 if [[ -z "$CLAUDE_BIN" ]]; then
   echo "Unable to locate the Claude CLI binary. Pass --claude-bin PATH." >&2
-  exit 1
-fi
-
-if ! command -v tmux >/dev/null 2>&1; then
-  echo "tmux is required to keep the share server running after this command exits." >&2
   exit 1
 fi
 
@@ -202,22 +195,23 @@ SAFE_SESSION_ID="$(printf '%s' "$SESSION_ID" | tr -cs 'a-zA-Z0-9' '-')"
 STATE_DIR="${STATE_BASE}/${SAFE_SESSION_ID}"
 mkdir -p "$STATE_DIR"
 
-SERVER_SESSION="csshare-${SAFE_SESSION_ID:0:24}"
-TUNNEL_SESSION="csshare-tunnel-${SAFE_SESSION_ID:0:17}"
+SERVER_PID_FILE="${STATE_DIR}/server.pid"
+TUNNEL_PID_FILE="${STATE_DIR}/tunnel.pid"
 SERVER_LOG="${STATE_DIR}/server.log"
 TUNNEL_LOG="${STATE_DIR}/tunnel.log"
 PUBLIC_URL_FILE="${STATE_DIR}/public-url.txt"
 LOCAL_URL_FILE="${STATE_DIR}/local-url.txt"
 
+# Return existing share if server still running
 EXISTING_LOCAL_URL="$(read_existing_local_url "$SERVER_LOG" || true)"
-if [[ -n "$EXISTING_LOCAL_URL" ]] && tmux_has_session "$SERVER_SESSION"; then
+if [[ -n "$EXISTING_LOCAL_URL" ]] && is_running "$SERVER_PID_FILE"; then
   if [[ "$MODE" == "quick" ]]; then
     if [[ -n "$PUBLIC_BASE_URL" ]]; then
       EXISTING_PATH="/${EXISTING_LOCAL_URL#*//*/}"
       printf 'Share URL: %s%s\n' "${PUBLIC_BASE_URL%/}" "$EXISTING_PATH"
       exit 0
     fi
-    if [[ -f "$PUBLIC_URL_FILE" ]] && tmux_has_session "$TUNNEL_SESSION"; then
+    if [[ -f "$PUBLIC_URL_FILE" ]] && is_running "$TUNNEL_PID_FILE"; then
       printf 'Share URL: %s\n' "$(cat "$PUBLIC_URL_FILE")"
       exit 0
     fi
@@ -227,21 +221,21 @@ if [[ -n "$EXISTING_LOCAL_URL" ]] && tmux_has_session "$SERVER_SESSION"; then
   fi
 fi
 
-tmux kill-session -t "$SERVER_SESSION" >/dev/null 2>&1 || true
-tmux kill-session -t "$TUNNEL_SESSION" >/dev/null 2>&1 || true
+# Stop old processes and clean up
+stop_process "$SERVER_PID_FILE"
+stop_process "$TUNNEL_PID_FILE"
 rm -f "$SERVER_LOG" "$TUNNEL_LOG" "$PUBLIC_URL_FILE" "$LOCAL_URL_FILE"
 
-# Wait for port to be released (up to 3 seconds)
+# Wait for port to be released
 for _ in $(seq 1 12); do
   if ! lsof -iTCP:"$PORT" -sTCP:LISTEN -t >/dev/null 2>&1; then
     break
   fi
   sleep 0.25
 done
-# Force kill anything still holding the port
 lsof -iTCP:"$PORT" -sTCP:LISTEN -t 2>/dev/null | xargs -r kill -9 2>/dev/null || true
 
-CMD="exec $(quote "$BIN_PATH") serve --session $(quote "$SESSION_ID") --claude-root $(quote "$CLAUDE_ROOT") --claude-bin $(quote "$CLAUDE_BIN") --host $(quote "$HOST") --port $(quote "$PORT")"
+CMD="$(quote "$BIN_PATH") serve --session $(quote "$SESSION_ID") --claude-root $(quote "$CLAUDE_ROOT") --claude-bin $(quote "$CLAUDE_BIN") --host $(quote "$HOST") --port $(quote "$PORT")"
 
 if [[ "$ALLOW_INPUT" -eq 0 ]]; then
   CMD+=" --read-only"
@@ -257,7 +251,9 @@ if [[ -n "$OWNER_HOME" ]]; then
   CMD+=" --owner-home $(quote "$OWNER_HOME")"
 fi
 
-tmux new-session -d -s "$SERVER_SESSION" "bash -lc $(quote "$CMD >> $(quote "$SERVER_LOG") 2>&1")"
+# Start server in background using nohup
+nohup bash -c "$CMD >> $(quote "$SERVER_LOG") 2>&1" &
+echo $! > "$SERVER_PID_FILE"
 
 LOCAL_URL="$(wait_for_pattern "$SERVER_LOG" 'http://[^[:space:]]+/s/[a-f0-9]+' 80 0.25 || true)"
 if [[ -z "$LOCAL_URL" ]]; then
@@ -281,7 +277,8 @@ if [[ -n "$PUBLIC_BASE_URL" ]]; then
 fi
 
 LOCAL_BASE="${LOCAL_URL%%/s/*}"
-tmux new-session -d -s "$TUNNEL_SESSION" "bash -lc $(quote "exec cloudflared tunnel --url $(quote "$LOCAL_BASE") >> $(quote "$TUNNEL_LOG") 2>&1")"
+nohup bash -c "exec cloudflared tunnel --url $(quote "$LOCAL_BASE") >> $(quote "$TUNNEL_LOG") 2>&1" &
+echo $! > "$TUNNEL_PID_FILE"
 
 TUNNEL_BASE="$(wait_for_pattern "$TUNNEL_LOG" 'https://[-a-z0-9]+\.trycloudflare\.com' 120 0.5 || true)"
 if [[ -z "$TUNNEL_BASE" ]]; then
